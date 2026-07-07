@@ -6,6 +6,50 @@ driven through an escalating sequence of recovery actions (Restart → Stop →
 Disable) whenever it reports a failure. A global policy can reject recovery for
 fatal signals such as `SIGSEGV` and `SIGILL`.
 
+## Design Decisions & Assumptions
+
+The exercise is intentionally loosely specified. The key decisions made here are:
+
+- **Recovery sequences are defined per _category_, not per individual service.**
+  Services are registered with one of three categories (`Critical`, `Major`,
+  `Minor`), and each category maps to a fixed escalation sequence:
+  - `Critical`: `Restart → Restart → Restart → Stop → Disable`
+  - `Major`: `Restart → Restart → Stop`
+  - `Minor`: `Restart → Disable`
+
+  This keeps registration simple and avoids duplicating identical sequences
+  across many services. The design still supports arbitrary per-service
+  sequences — `RecoveryPolicy` accepts any ordered list of actions — so moving
+  to fully custom sequences would be a small, localized change.
+
+- **Registration happens at startup via `registerService(name, category)`.**
+  A synchronous, in-process API was chosen over config files or a network
+  interface because it is the simplest thing that is fully testable and keeps
+  the focus on the recovery logic rather than I/O plumbing.
+
+- **Failures are fed in as `FailureEvent{ serviceName, signal }`** through
+  `scheduler.notifyFailure(event)`. This is a plain value type, making it
+  trivial to drive the scheduler from `main`, from tests, or from a future
+  real event source (a queue, socket, or signal handler) without changing the
+  core.
+
+- **A global policy can veto recovery for fatal signals.** `SIGSEGV` and
+  `SIGILL` indicate unrecoverable faults, so the `GlobalPolicy` rejects them
+  before any action runs and the service's statistics are left unchanged. This
+  is an added assumption, not an explicit requirement.
+
+- **Escalation clamps at the last action.** Once a service reaches the end of
+  its sequence, every subsequent failure repeats the final action (`Disable`
+  for `Critical`/`Minor`, `Stop` for `Major`) rather than throwing or wrapping.
+
+- **Recovery actions are dummies.** `RestartAction`, `StopAction`, and
+  `DisableAction` only log their intent — no real system calls are made, as
+  permitted by the brief.
+
+- **The core is a static library.** `service_recovery_lib` is linked by both
+  the application and the unit tests so the exact same code is exercised in
+  both.
+
 ## Project Structure
 
 ```
