@@ -1,0 +1,5 @@
+# Build output
+build/
+build-coverage/
+out/
+cmake-build-*/
